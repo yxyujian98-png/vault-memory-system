@@ -1,6 +1,61 @@
-# OpenClaw Memory System
+# OpenClaw Memory System / OpenClaw 记忆系统
 
-A dual-layer memory system for OpenClaw agents. Layer 1 is OpenClaw's built-in SQLite memory (hooks + memory_search). Layer 2 is custom Python scripts for vault sync, vector indexing, zero-LLM compression, and self-healing.
+> **让 OpenClaw Agent 拥有持久记忆。**
+>
+> 自动同步 Obsidian 知识库 → Agent 可搜索。会话观察零成本压缩 → 不丢失。向量库 + 嵌入服务 + 同步链路 → 自动健康监控。
+
+## 关键词
+
+记忆系统、长期记忆、向量检索、知识库同步、Obsidian vault、Qdrant、embedding、agent memory、零 LLM 压缩、自愈监控、heartbeat、vault 同步、概念聚合、记忆蒸馏、健康检查
+
+## 这是什么
+
+一个 OpenClaw 的记忆增强技能。解决了三个问题：
+
+1. **Vault 内容进不了记忆** — 你用 Obsidian 记了大量笔记，但 Agent 的 `memory_search` 搜不到
+2. **会话记忆丢失** — 工具调用、决策、发现等有价值信息，对话结束就没了
+3. **记忆系统维护成本高** — 向量库、嵌入服务、同步链路，哪个断了都不知道
+
+## 安装
+
+```bash
+cd ~/.openclaw/workspace/skills
+git clone https://github.com/yxyujian98-png/openclaw-memory-system.git
+cd openclaw-memory-system
+pip install -r requirements.txt
+docker-compose up -d                              # 启动 Qdrant
+python scripts/setup.py --vault-dir /path/to/vault  # 7 步自动配置
+```
+
+## 你需要什么
+
+| 组件 | 必需 | 说明 |
+|------|:----:|------|
+| Python 3.10+ | ✅ | 脚本运行环境 |
+| Qdrant | ✅ | 向量数据库（docker-compose 一行启动） |
+| 嵌入服务 | ✅ | LM Studio / Ollama / 任何 OpenAI 兼容的 embedding 端点 |
+| Obsidian Vault | ✅ | 你的 Markdown 知识库 |
+| LLM API | 可选 | 只有高重要性记忆才需要（DeepSeek / OpenAI 等） |
+
+## 它做了什么
+
+```
+你的 Obsidian Vault                          OpenClaw memory_search
+  ├── 01-日记/     ── sync_vault_memory.py ──→  memory/*.md (SQLite)
+  ├── 02-知识/     ── vault_to_qdrant.py   ──→  Qdrant (向量库)
+  ├── 04-教训/
+  └── 07-项目/
+
+Agent 工具调用     ── observe.py + compress.py ──→ Qdrant (结构化观察)
+
+每 45 分钟自动：vault 健康检查 → 增量同步 → 记忆压缩 → 健康报告
+```
+
+**零 LLM 成本**：compress.py 用规则驱动（不调 LLM）把工具调用结构化为类型/概念/重要性。
+**三级嵌入降级**：LM Studio → 本地 ONNX → numpy 哈希，嵌入服务挂了也能跑。
+**版本追踪**：Qdrant 向量带 version/is_latest/supersedes，知识演化不冲突。
+
+---
 
 ## Architecture Overview
 

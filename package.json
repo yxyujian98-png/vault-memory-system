@@ -1,10 +1,10 @@
 {
   "name": "openclaw-memory-system",
   "version": "1.0.0",
-  "description": "Multi-layer memory system for OpenClaw agents: vault sync, vector search, zero-LLM compression, self-healing",
+  "description": "OpenClaw 记忆系统：Obsidian vault 自动同步、Qdrant 向量检索、零 LLM 成本压缩会话观察、自愈健康监控。Multi-layer memory for OpenClaw agents.",
   "author": "OpenClaw Community",
   "license": "MIT",
-  "keywords": ["openclaw", "memory", "vault", "qdrant", "obsidian", "vector-search", "agent-memory"],
+  "keywords": ["openclaw", "memory", "记忆", "vault", "qdrant", "obsidian", "vector-search", "向量检索", "agent-memory", "知识库", "knowledge-management", "llm", "embedding"],
   "openclaw": {
     "skill": true,
     "minVersion": "2026.5.0",

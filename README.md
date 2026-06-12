@@ -1,167 +1,36 @@
 # OpenClaw Memory System
 
-A production-grade dual-layer memory system for OpenClaw agents.
+> **让 OpenClaw Agent 拥有持久记忆。**
+>
+> 自动同步 Obsidian 知识库 → Agent 可搜索。会话观察零成本压缩 → 不丢失。向量库 + 嵌入服务 + 同步链路 → 自动健康监控。
 
-**Layer 1** (built-in): OpenClaw's SQLite-based memory with hooks, file watcher, and hybrid search.  
-**Layer 2** (custom): Python scripts for vault sync, Qdrant vector indexing, zero-LLM compression, and self-healing.
+## 它解决什么问题
 
-## How It Actually Works
+你用 Obsidian 记了大量笔记，但 OpenClaw Agent 的 `memory_search` 搜不到。
+你和 Agent 聊了半天，做了很多决策和发现，对话结束就丢了。
+你的 Qdrant 向量库、LM Studio 嵌入服务、vault 同步链路，哪个断了都不知道。
 
-### The Two Layers
+这个技能把这三件事自动化了。
 
-OpenClaw already has a memory system. This skill **extends** it, not replaces it.
-
-**Layer 1 — OpenClaw Built-in** (no scripts needed):
-- `session-memory` hook fires on `/new` or `/reset`, saves last 15 messages to `memory/YYYY-MM-DD-HHMM.md`
-- `memory-compact` hook extracts memories before compaction
-- `memory-extract` hook extracts on `/new` or `/reset`
-- File watcher detects `memory/*.md` changes, reindexes in 1.5s
-- `memory_search` tool searches SQLite (FTS5 keyword + sqlite-vec vector + hybrid merge)
-- SQLite at `~/.openclaw/memory/<agentId>.sqlite`
-
-**Layer 2 — Custom Scripts** (this skill):
-- Vault → `memory/` sync (so vault content appears in `memory_search`)
-- Vault → Qdrant vector sync (separate vector store for custom search)
-- Session observations → compress → Qdrant (zero-LLM structuring)
-- Concept consolidation via LLM (high-importance only)
-- Health monitoring, antibody self-healing, service guardians
-
-### Runtime Data Flow
-
-```
-                    ┌─── OpenClaw Built-in ───┐
-                    │                         │
-User chat           │  session-memory hook    │
-  │                 │    → memory/*.md        │
-  │                 │                         │
-  │ /new or /reset  │  file watcher           │
-  │   └────────────→│    → debounced reindex  │
-  │                 │    → SQLite (FTS5+vec)  │
-  │                 │                         │
-  │ memory_search   │  hybrid search          │
-  │   └────────────→│    → BM25 + vector      │
-  │                 │    → merged results      │
-  └─────────────────┘                         │
-                    └─────────────────────────┘
-                              │
-                    sync_vault_memory.py
-                    (vault → memory/)
-                              │
-                    ┌─── Custom Scripts ───────┐
-                    │                          │
-Vault edit          │  vault_watcher.py        │
-  (Obsidian)        │    → vault_to_qdrant.py  │
-  │                 │      → chunk + embed     │
-  │                 │      → Qdrant            │
-  │                 │                          │
-Heartbeat (45m)     │  orchestrator --light    │
-  │                 │    → vault_guardian      │
-  │                 │    → extract_memories    │
-  │                 │    → memory_health       │
-  │                 │    → 12 more tasks...    │
-  │                 │                          │
-Heavy (6h)          │  orchestrator --heavy    │
-  │                 │    → extract --full      │
-  │                 │    → vault_to_qdrant     │
-  │                 │    → build_profile       │
-  └─────────────────┘──────────────────────────┘
-```
-
-### What Happens When You Chat
-
-1. **You send a message** → OpenClaw agent processes it in session
-2. **Agent calls tools** (read, edit, exec, search) → `observe.py` queues observations
-3. **You type `/new`** →
-   - `session-memory` hook saves last 15 messages to `memory/2026-06-12-1000.md`
-   - `memory-extract` hook extracts valuable memories
-   - OpenClaw file watcher reindexes the new file (1.5s debounce)
-4. **Next `memory_search` call** → SQLite finds the new content via hybrid search
-
-### What Happens During Heartbeat
-
-Cron fires every 45 minutes → routine agent runs `maintenance_orchestrator.py --cycle light --parallel`:
-
-```
-Level 0 (parallel):
-  ├── vault_guardian.py      → scan vault stale files, sync changed → memory/
-  ├── vault_to_qdrant.py     → embed vault changes → Qdrant
-  ├── extract_memories.py    → compress session observations → Qdrant
-  ├── memory_health.py       → check 4 chains (vault→memory→qdrant→embedding)
-  ├── lmstudio_guardian.py   → check embedding server health
-  ├── context_snapshot.py    → save pre-compaction context backup
-  ├── process_inbox.py       → auto-categorize vault inbox
-  ├── auto_link_vault.py     → add [[wiki links]] to vault files
-  ├── health_check_v2.py     → antibody-based health patrol
-  ├── smoke_test.py          → cross-pipeline smoke test
-  ├── heartbeat_alert.py     → trend alerts
-  ├── health_scoreboard.py   → pipeline reliability metrics
-  ├── system_snapshot.py     → system state snapshot
-  └── vault_maintainer.py    → vault repair (archive, index, backup)
-
-Level 1 (depends on vault_guardian):
-  └── sync_vault_memory.py   → vault → memory/ full sync (backup)
-```
-
-### What the Hooks Do
-
-| Hook | Event | Action |
-|------|-------|--------|
-| `session-memory` | `/new`, `/reset` | Save last 15 messages to `memory/YYYY-MM-DD-HHMM.md` |
-| `memory-compact` | compaction | Extract memories before context is lost |
-| `memory-extract` | `/new`, `/reset` | Extract valuable memories from session |
-| `compaction-notifier` | compaction start/end | Send visible chat notice |
-| `boot-md` | gateway startup | Run BOOT.md |
-| `command-logger` | any command | Log to `~/.openclaw/logs/commands.log` |
-
-### What memory_search Indexes
-
-```
-~/.openclaw/workspace/
-  ├── MEMORY.md                    ← always indexed, loaded at session start
-  └── memory/
-      ├── *.md                     ← indexed (1544 files, 4777 chunks)
-      │   ├── 2026-06-12-1000.md   ← session-memory hook output
-      │   ├── 02-知识_*.md          ← vault sync output
-      │   ├── 04-教训_*.md          ← vault sync output
-      │   └── 07-项目_*.md          ← vault sync output
-      └── .dreams/                 ← dreaming system (disabled)
-
-Extra paths (configured):
-  ├── data/skills.memory.md        ← skill usage tracking
-  └── ~/self-improving/            ← execution quality memory
-```
-
-Index: SQLite `~/.openclaw/memory/main.sqlite`
-- 1544 files, 4777 chunks, 8357 cached embeddings
-- Provider: LM Studio (nomic-embed-text-v1.5, 768 dims)
-- FTS5 (BM25) + sqlite-vec (cosine similarity) + hybrid merge
-
-### What Qdrant Stores (Custom)
-
-```
-Qdrant localhost:6333
-  └── knowledge_base collection
-      ├── vault_sync pipeline     ← vault markdown chunks (vault_to_qdrant.py)
-      ├── compress pipeline       ← tool call observations (compress.py)
-      ├── consolidate pipeline    ← fused concepts (extract_memories.py --full)
-      └── trajectory pipeline     ← tool calls from JSONL trajectories
-```
-
-This is **separate** from OpenClaw's SQLite. Qdrant is used for:
-- Custom vector search (unified_memory.py)
-- Observation pattern analysis (compress_to_rule.py)
-- Concept consolidation (extract_memories.py Step 2)
-
-## Installation
+## 快速开始
 
 ```bash
+# 1. 克隆到 OpenClaw 技能目录
 cd ~/.openclaw/workspace/skills
-git clone https://github.com/your-org/openclaw-memory-system.git
+git clone https://github.com/yxyujian98-png/openclaw-memory-system.git
 cd openclaw-memory-system
-python scripts/setup.py --vault-dir /path/to/vault
-```
 
-Edit `scripts/config.json` with your API keys. See `scripts/config.template.json` for format.
+# 2. 安装依赖
+pip install -r requirements.txt
+
+# 3. 启动 Qdrant
+docker-compose up -d
+
+# 4. 运行安装向导（自动检查依赖、创建配置、初始化 Qdrant）
+python scripts/setup.py --vault-dir /path/to/your/vault
+
+# 5. 按 setup.py 输出的指引配置 hooks 和 cron
+```
 
 ## Configuration
 
